@@ -68,7 +68,8 @@ func (fs *FS) Mount(prefix string, other fs.FS) error {
 	// TODO: Yeah... obviously we can optimize this so that we don't
 	// have to sort it every time. Patches welcome
 	sort.Slice(mounts, func(i, j int) bool {
-		return mounts[i].prefix < mounts[j].prefix
+		// longest matches come first
+		return len(mounts[i].prefix) > len(mounts[j].prefix)
 	})
 
 	fs.mounts = mounts
@@ -88,4 +89,32 @@ func (fs *FS) Open(name string) (fs.File, error) {
 		return mount.fs.Open(strings.TrimPrefix(name, mount.prefix+"/"))
 	}
 	return nil, fmt.Errorf(`file %q was not found`, name)
+}
+
+func (fs *FS) Unmount(prefix string) error {
+	// The prefix must be normalized.
+	prefix = path.Clean(prefix)
+	if !strings.HasPrefix(prefix, "/") {
+		return fmt.Errorf(`invalid prefix (path was normalized to %q)`, prefix)
+	}
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if _, ok := fs.prefixes[prefix]; !ok {
+		return fmt.Errorf(`prefix %q has not been mounted`, prefix)
+	}
+
+	for i, mount := range fs.mounts {
+		if mount.prefix != prefix {
+			continue
+		}
+
+		// TODO: inefficient
+		fs.mounts = append(fs.mounts[:i], fs.mounts[i+1:]...)
+
+		delete(fs.prefixes, prefix)
+		break
+	}
+	return nil
 }

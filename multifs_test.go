@@ -81,4 +81,10 @@ func TestMultiFS(t *testing.T) {
 			require.NoError(t, err, `fs.Open should succeed`)
 		})
 	}
+
+	require.Error(t, fs.Unmount("/non-existent"), `fs.Unmoun(/non-existent) should fail`)
+	require.NoError(t, fs.Unmount("/corge"), `fs.Unmount(/corge) should succeed`)
+	require.NoError(t, fs.Unmount("/quux"), `fs.Unmount(/quux) should succeed`)
+	require.Error(t, fs.Unmount("/corge"), `fs.Unmount(/corge) a second time should fail`)
+
 }
