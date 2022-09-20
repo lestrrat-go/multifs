@@ -91,6 +91,11 @@ func TestMultiFS(t *testing.T) {
 		}
 
 		paths[path] = struct{}{}
+		t.Run(fmt.Sprintf("Stat %q", path), func(t *testing.T) {
+			fi, err := mfs.Stat(path)
+			require.NoError(t, err, `fs.Stat should succeed`)
+			_ = fi
+		})
 		t.Run(fmt.Sprintf("Open %q", path), func(t *testing.T) {
 			f, err := mfs.Open(path)
 			if f != nil {

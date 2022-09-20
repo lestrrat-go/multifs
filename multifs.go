@@ -187,6 +187,9 @@ func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 func (mfs *FS) Stat(name string) (fs.FileInfo, error) {
+	mfs.mu.RLock()
+	defer mfs.mu.RUnlock()
+
 	name = path.Clean(name)
 
 	// Current dir = "."
@@ -195,7 +198,28 @@ func (mfs *FS) Stat(name string) (fs.FileInfo, error) {
 	case ".", "/":
 		return dirFileInfo(name), nil
 	}
-	panic(name)
+
+	// if the path is not absolute, assume "/" + name
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+
+	// emulation required for these
+	if src, ok := mfs.fsmap[name]; ok {
+		return fs.Stat(src, ".")
+	}
+
+	for _, prefix := range mfs.mountPoints {
+		if !strings.HasPrefix(name, prefix+"/") {
+			continue
+		}
+
+		src := mfs.fsmap[prefix]
+		return fs.Stat(src, strings.TrimPrefix(name, prefix+"/"))
+	}
+
+	// TODO: partial matches?
+	return nil, fmt.Errorf(`file %s not found`, name)
 }
 
 type dirFileInfo string
