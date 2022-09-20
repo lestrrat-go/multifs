@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type FS struct {
@@ -119,12 +120,35 @@ func (mfs *FS) Unmount(prefix string) error {
 }
 
 func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	name = path.Clean(name)
+
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
+	switch name {
+	case ".", "/":
+		uniq := make(map[string]struct{})
+		for dname := range mfs.fsmap {
+			// "/foo". gets split into "", "foo"
+			// we go through this because we may have "/foo/bar" as prefix
+			splitDirs := strings.Split(dname, "/")
+			uniq["/"+splitDirs[1]] = struct{}{}
+		}
+
+		var list []fs.DirEntry
+		for k := range uniq {
+			list = append(list, dirEntry(k))
+		}
+		return list, nil
+	}
+	// if the path is not absolute, assume "/" + name
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+
 	// emulation required for these
 	if src, ok := mfs.fsmap[name]; ok {
-		return fs.ReadDir(src, name)
+		return fs.ReadDir(src, ".")
 	}
 
 	for _, prefix := range mfs.mountPoints {
@@ -137,4 +161,60 @@ func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 
 	return nil, fmt.Errorf(`no such directory %q`, name)
+}
+
+func (mfs *FS) Stat(name string) (fs.FileInfo, error) {
+	name = path.Clean(name)
+
+	// Current dir = "."
+	// Root dir    = "/"
+	switch name {
+	case ".", "/":
+		return dirFileInfo(name), nil
+	}
+	panic(name)
+}
+
+type dirFileInfo string
+
+func (fi dirFileInfo) Name() string {
+	return string(fi)
+}
+
+func (dirFileInfo) IsDir() bool {
+	return true
+}
+
+func (dirFileInfo) Sys() interface{} {
+	return nil
+}
+
+func (dirFileInfo) Mode() fs.FileMode {
+	return fs.ModeDir
+}
+
+func (dirFileInfo) Size() int64 {
+	return int64(0)
+}
+
+func (dirFileInfo) ModTime() time.Time {
+	return time.Time{}
+}
+
+type dirEntry string
+
+func (d dirEntry) Name() string {
+	return string(d)
+}
+
+func (dirEntry) IsDir() bool {
+	return true
+}
+
+func (dirEntry) Type() fs.FileMode {
+	return fs.ModeDir
+}
+
+func (d dirEntry) Info() (fs.FileInfo, error) {
+	return dirFileInfo(d.Name()), nil
 }

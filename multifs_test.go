@@ -58,14 +58,13 @@ func TestMultiFS(t *testing.T) {
 	}
 
 	foo := os.DirFS(filepath.Join(root, "foo"))
-	_, err = foo.Open("1.txt")
-	require.NoError(t, err, `foo.Open sanity`)
 	bar := os.DirFS(filepath.Join(root, "bar"))
 
-	var fs multifs.FS
-	require.NoError(t, fs.Mount("/quux", foo), `fs.Mount(/quux) should succeed`)
-	require.NoError(t, fs.Mount("/corge", bar), `fs.Mount(/corge) should succeed`)
+	var mfs multifs.FS
+	require.NoError(t, mfs.Mount("/quux", foo), `mfs.Mount(/quux) should succeed`)
+	require.NoError(t, mfs.Mount("/corge", bar), `mfs.Mount(/corge) should succeed`)
 
+	paths := make(map[string]struct{})
 	for _, file := range files {
 		file := file
 		var path string
@@ -74,8 +73,10 @@ func TestMultiFS(t *testing.T) {
 		} else {
 			path = "/corge/" + strings.TrimPrefix(file.Path, "bar/")
 		}
+
+		paths[path] = struct{}{}
 		t.Run(fmt.Sprintf("Open %q", path), func(t *testing.T) {
-			f, err := fs.Open(path)
+			f, err := mfs.Open(path)
 			if f != nil {
 				defer f.Close()
 			}
@@ -83,9 +84,14 @@ func TestMultiFS(t *testing.T) {
 		})
 	}
 
-	require.Error(t, fs.Unmount("/non-existent"), `fs.Unmoun(/non-existent) should fail`)
-	require.NoError(t, fs.Unmount("/corge"), `fs.Unmount(/corge) should succeed`)
-	require.NoError(t, fs.Unmount("/quux"), `fs.Unmount(/quux) should succeed`)
-	require.Error(t, fs.Unmount("/corge"), `fs.Unmount(/corge) a second time should fail`)
+	fs.WalkDir(&mfs, ".", func(name string, d fs.DirEntry, err error) error {
+		delete(paths, "/"+name)
+		return nil
+	})
+	require.Len(t, paths, 0, `paths should be empty`)
 
+	require.Error(t, mfs.Unmount("/non-existent"), `fs.Unmoun(/non-existent) should fail`)
+	require.NoError(t, mfs.Unmount("/corge"), `fs.Unmount(/corge) should succeed`)
+	require.NoError(t, mfs.Unmount("/quux"), `fs.Unmount(/quux) should succeed`)
+	require.Error(t, mfs.Unmount("/corge"), `fs.Unmount(/corge) a second time should fail`)
 }
