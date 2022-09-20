@@ -3,6 +3,9 @@ multifs
 
 Create an fs.FS instance that "mounts" other fs.FS.
 
+As of this writing this module is really aimed at one-off tools and testing,
+and thus does not really prioritize on efficiency
+
 Note: extremely alpha quality.
 
 # SYNOPSIS
