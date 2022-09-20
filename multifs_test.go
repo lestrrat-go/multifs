@@ -14,6 +14,7 @@ import (
 )
 
 var _ fs.FS = &multifs.FS{}
+var _ fs.ReadDirFS = &multifs.FS{}
 
 func TestMultiFS(t *testing.T) {
 	root, err := os.MkdirTemp("", "multifs-*")

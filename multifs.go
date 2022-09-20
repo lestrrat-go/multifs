@@ -15,9 +15,12 @@ import (
 )
 
 type FS struct {
-	mu       sync.RWMutex
-	mounts   []*mountPoint
-	prefixes map[string]struct{} // used solely for deduping
+	mu sync.RWMutex
+
+	// mountPoints holds a sorted list of names so that we can
+	// match paths from longest to shortest
+	mountPoints []string
+	fsmap       map[string]fs.FS
 }
 
 // New creates an empty multifs.FS object. You will need to call Mount()
@@ -26,14 +29,9 @@ func New() *FS {
 	return &FS{}
 }
 
-type mountPoint struct {
-	prefix string
-	fs     fs.FS
-}
-
-func (fs *FS) initNoLock() {
-	if fs.prefixes == nil {
-		fs.prefixes = make(map[string]struct{})
+func (mfs *FS) initNoLock() {
+	if mfs.fsmap == nil {
+		mfs.fsmap = make(map[string]fs.FS)
 	}
 }
 
@@ -44,77 +42,99 @@ func (fs *FS) initNoLock() {
 //
 // Mount currently only understands linux-style paths (technically
 // it uses "path" package).
-func (fs *FS) Mount(prefix string, other fs.FS) error {
+func (mfs *FS) Mount(prefix string, other fs.FS) error {
 	// The prefix must be normalized.
 	prefix = path.Clean(prefix)
 	if !strings.HasPrefix(prefix, "/") {
 		return fmt.Errorf(`invalid prefix (path was normalized to %q)`, prefix)
 	}
 
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
 
-	fs.initNoLock()
+	mfs.initNoLock()
 
-	if _, ok := fs.prefixes[prefix]; ok {
+	if _, ok := mfs.fsmap[prefix]; ok {
 		return fmt.Errorf(`prefix %q has already been mounted`, prefix)
 	}
 
-	mounts := append(fs.mounts, &mountPoint{
-		prefix: prefix,
-		fs:     other,
-	})
+	mountPoints := append(mfs.mountPoints, prefix)
 
 	// TODO: Yeah... obviously we can optimize this so that we don't
 	// have to sort it every time. Patches welcome
-	sort.Slice(mounts, func(i, j int) bool {
+	sort.Slice(mountPoints, func(i, j int) bool {
 		// longest matches come first
-		return len(mounts[i].prefix) > len(mounts[j].prefix)
+		return len(mountPoints[i]) > len(mountPoints[j])
 	})
 
-	fs.mounts = mounts
-	fs.prefixes[prefix] = struct{}{}
+	mfs.mountPoints = mountPoints
+	mfs.fsmap[prefix] = other
 	return nil
 }
 
-func (fs *FS) Open(name string) (fs.File, error) {
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
+func (mfs *FS) Open(name string) (fs.File, error) {
+	mfs.mu.RLock()
+	defer mfs.mu.RUnlock()
 	name = path.Clean(name)
-	for _, mount := range fs.mounts {
-		if !strings.HasPrefix(name, mount.prefix) {
+
+	for _, prefix := range mfs.mountPoints {
+		if !strings.HasPrefix(name, prefix+"/") {
 			continue
 		}
 
-		return mount.fs.Open(strings.TrimPrefix(name, mount.prefix+"/"))
+		src := mfs.fsmap[prefix]
+		return src.Open(strings.TrimPrefix(name, prefix+"/"))
 	}
 	return nil, fmt.Errorf(`file %q was not found`, name)
 }
 
-func (fs *FS) Unmount(prefix string) error {
+func (mfs *FS) Unmount(prefix string) error {
 	// The prefix must be normalized.
 	prefix = path.Clean(prefix)
 	if !strings.HasPrefix(prefix, "/") {
 		return fmt.Errorf(`invalid prefix (path was normalized to %q)`, prefix)
 	}
 
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
 
-	if _, ok := fs.prefixes[prefix]; !ok {
+	mfs.initNoLock()
+
+	if _, ok := mfs.fsmap[prefix]; !ok {
 		return fmt.Errorf(`prefix %q has not been mounted`, prefix)
 	}
 
-	for i, mount := range fs.mounts {
-		if mount.prefix != prefix {
+	for i, n := range mfs.mountPoints {
+		if n != prefix {
 			continue
 		}
 
 		// TODO: inefficient
-		fs.mounts = append(fs.mounts[:i], fs.mounts[i+1:]...)
+		mfs.mountPoints = append(mfs.mountPoints[:i], mfs.mountPoints[i+1:]...)
 
-		delete(fs.prefixes, prefix)
+		delete(mfs.fsmap, prefix)
 		break
 	}
 	return nil
+}
+
+func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	mfs.mu.RLock()
+	defer mfs.mu.RUnlock()
+
+	// emulation required for these
+	if src, ok := mfs.fsmap[name]; ok {
+		return fs.ReadDir(src, name)
+	}
+
+	for _, prefix := range mfs.mountPoints {
+		if !strings.HasPrefix(name, prefix+"/") {
+			continue
+		}
+
+		src := mfs.fsmap[prefix]
+		return fs.ReadDir(src, name)
+	}
+
+	return nil, fmt.Errorf(`no such directory %q`, name)
 }
