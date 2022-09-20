@@ -40,6 +40,18 @@ func TestMultiFS(t *testing.T) {
 			Path:    "bar/b.txt",
 			Content: strings.Repeat("b", 100),
 		},
+		{
+			Path:    "baz/0baz/one.txt",
+			Content: strings.Repeat("one", 100),
+		},
+		{
+			Path:    "baz/0baz/1baz/one.txt",
+			Content: strings.Repeat("one", 100),
+		},
+		{
+			Path:    "baz/0baz/1baz/2baz/one.txt",
+			Content: strings.Repeat("one", 100),
+		},
 	}
 
 	for _, file := range files {
@@ -53,16 +65,18 @@ func TestMultiFS(t *testing.T) {
 		require.NoError(t, err, `os.OpenFile should succeed`)
 
 		io.WriteString(f, file.Content)
-
 		_ = f.Close()
+		t.Logf("Wrote file %s", path)
 	}
 
 	foo := os.DirFS(filepath.Join(root, "foo"))
 	bar := os.DirFS(filepath.Join(root, "bar"))
+	baz := os.DirFS(filepath.Join(root, "baz"))
 
 	var mfs multifs.FS
 	require.NoError(t, mfs.Mount("/quux", foo), `mfs.Mount(/quux) should succeed`)
 	require.NoError(t, mfs.Mount("/corge", bar), `mfs.Mount(/corge) should succeed`)
+	require.NoError(t, mfs.Mount("/grault", baz), `mfs.Mount(/grault) should succeed`)
 
 	paths := make(map[string]struct{})
 	for _, file := range files {
@@ -70,8 +84,10 @@ func TestMultiFS(t *testing.T) {
 		var path string
 		if strings.HasPrefix(file.Path, "foo/") {
 			path = "/quux/" + strings.TrimPrefix(file.Path, "foo/")
-		} else {
+		} else if strings.HasPrefix(file.Path, "bar/") {
 			path = "/corge/" + strings.TrimPrefix(file.Path, "bar/")
+		} else {
+			path = "/grault/" + strings.TrimPrefix(file.Path, "baz/")
 		}
 
 		paths[path] = struct{}{}
@@ -85,6 +101,7 @@ func TestMultiFS(t *testing.T) {
 	}
 
 	fs.WalkDir(&mfs, ".", func(name string, d fs.DirEntry, err error) error {
+		t.Logf("/%s", name)
 		delete(paths, "/"+name)
 		return nil
 	})

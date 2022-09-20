@@ -119,6 +119,35 @@ func (mfs *FS) Unmount(prefix string) error {
 	return nil
 }
 
+func (mfs *FS) getPseudoDirEntries(base string) ([]fs.DirEntry, bool) {
+	var matched int
+	uniq := make(map[string]struct{})
+	for _, prefix := range mfs.mountPoints {
+		if base != "" {
+			if !strings.HasPrefix(prefix, base) {
+				continue
+			}
+		}
+
+		// counter to keep track if we actually had a prefix match
+		matched++
+
+		// e.g. prefix=/a/b/c is under base=/a
+
+		p := strings.TrimPrefix(prefix, base+"/")
+		// p = "b/c"
+
+		s, _, _ := strings.Cut(p, "/")
+		uniq[s] = struct{}{}
+	}
+
+	var list []fs.DirEntry
+	for k := range uniq {
+		list = append(list, dirEntry(k))
+	}
+	return list, matched > 0
+}
+
 func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	name = path.Clean(name)
 
@@ -127,20 +156,10 @@ func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 	switch name {
 	case ".", "/":
-		uniq := make(map[string]struct{})
-		for dname := range mfs.fsmap {
-			// "/foo". gets split into "", "foo"
-			// we go through this because we may have "/foo/bar" as prefix
-			splitDirs := strings.Split(dname, "/")
-			uniq["/"+splitDirs[1]] = struct{}{}
-		}
-
-		var list []fs.DirEntry
-		for k := range uniq {
-			list = append(list, dirEntry(k))
-		}
+		list, _ := mfs.getPseudoDirEntries("")
 		return list, nil
 	}
+
 	// if the path is not absolute, assume "/" + name
 	if !strings.HasPrefix(name, "/") {
 		name = "/" + name
@@ -157,7 +176,11 @@ func (mfs *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 
 		src := mfs.fsmap[prefix]
-		return fs.ReadDir(src, name)
+		return fs.ReadDir(src, strings.TrimPrefix(name, prefix+"/"))
+	}
+
+	if list, matched := mfs.getPseudoDirEntries(name); matched {
+		return list, nil
 	}
 
 	return nil, fmt.Errorf(`no such directory %q`, name)
