@@ -137,7 +137,16 @@ func (mfs *FS) getPseudoDirEntries(base string) ([]fs.DirEntry, bool) {
 		p := strings.TrimPrefix(prefix, base+"/")
 		// p = "b/c"
 
-		s, _, _ := strings.Cut(p, "/")
+		// in go 1.19, this would have been
+		// s, _, _ := strings.Cut(p, "/")
+		// uniq[s] = struct{}{}
+
+		var s string
+		if i := strings.Index(p, "/"); i >= 0 {
+			s = p[:i]
+		} else {
+			s = p
+		}
 		uniq[s] = struct{}{}
 	}
 
